@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
@@ -13,9 +13,9 @@ namespace CP
         //#==================================================================== ENUM
         private enum ControlState
         {
-            None, Donut, Triangle
+            None, Donut, Triangle, AlphaRect
         }
-
+        
         //#==================================================================== CONTROLS
         private NumericUpDown _numHue = new NumericUpDown();
         private NumericUpDown _numSaturation = new NumericUpDown();
@@ -23,42 +23,87 @@ namespace CP
         private NumericUpDown _numRed = new NumericUpDown();
         private NumericUpDown _numGreen = new NumericUpDown();
         private NumericUpDown _numBlue = new NumericUpDown();
+        private NumericUpDown _numAlpha = new NumericUpDown();
         private Button _btnOK = new Button();
+        private Button _btnDefault = new Button();
+        private Button _btnOld = new Button();
 
         //#==================================================================== VARIABLES
         private Bitmap _colorWheel;
+        private Bitmap _alphaBackground;
         private ControlState _controlState = ControlState.None;
-        private Color _oldColor;
+        private Color _oldColor, _defaultColor;
         private bool _isManualChange = false; // set to true when manually changing numericupdown values
+        private Rectangle _oldColorRect, _defaultColorRect;
+        private Brush _alphaPatternBrush;
+
+        private SizeF _textSizePattern;
+        
+        //#==================================================================== EVENTS
+        public event EventHandler<EventArgs> SelectedColorChanged;
 
         //#==================================================================== INITIALIZE
         public ColorPicker() : this(Color.White)
         {
         }
+        private SizeF GetTextSize(Graphics g)
+        {
+            var font = new Font(SystemFonts.DefaultFont, FontStyle.Regular);
+            var drawFormat = new System.Drawing.StringFormat(StringFormatFlags.NoClip | StringFormatFlags.NoWrap);
+            var size = g.MeasureString("H", font, new PointF(0, 0), drawFormat);
+
+            return size;
+        }
+
         public ColorPicker(Color defaultColor)
         {
-            this.ClientSize = new Size(250, 340);
-
+            using (Graphics g = this.CreateGraphics())
+            {
+                _textSizePattern = GetTextSize(g);
+            }
+            this.ClientSize = new Size((int)(23f* _textSizePattern.Width), (int)(32f* _textSizePattern.Height));
+            
             _numHue.DecimalPlaces = _numSaturation.DecimalPlaces = _numBrightness.DecimalPlaces = 2;
             _numHue.Maximum = 359.99m;
-            _numHue.Location = new Point(30, Y + Diameter + 10);
-            _numHue.Width = _numSaturation.Width = _numBrightness.Width = _numRed.Width = _numGreen.Width = _numBlue.Width = 60;
+            _numHue.Location = new Point(3 * X, Y + AlphaYPos + Thickness);
+            _numHue.Width = _numSaturation.Width = _numBrightness.Width = _numRed.Width = _numGreen.Width = _numBlue.Width = _numAlpha.Width = (int)(4.5f*_textSizePattern.Width);
+            _numHue.Height = _numSaturation.Height = _numBrightness.Height = _numRed.Height = _numGreen.Height = _numBlue.Height = _numAlpha.Height = (int)(1.2f * _textSizePattern.Height);
             _numHue.ValueChanged += numHSB_ValueChanged;
-            _numSaturation.Location = new Point(_numHue.Left, _numHue.Bottom + 10);
+            _numSaturation.Location = new Point(_numHue.Left, _numHue.Bottom + Y);
             _numSaturation.ValueChanged += numHSB_ValueChanged;
-            _numBrightness.Location = new Point(_numHue.Left, _numSaturation.Bottom + 10);
+            _numBrightness.Location = new Point(_numHue.Left, _numSaturation.Bottom + Y);
             _numBrightness.ValueChanged += numHSB_ValueChanged;
-            _numRed.Maximum = _numGreen.Maximum = _numBlue.Maximum = 255;
-            _numRed.Location = new Point(_numHue.Right + 30, Y + Diameter + 10);
+            _numRed.Maximum = _numGreen.Maximum = _numBlue.Maximum = _numAlpha.Maximum = 255;
+            _numRed.Location = new Point(_numHue.Right + 3*X, Y + AlphaYPos + Thickness);
             _numRed.ValueChanged += numRGB_ValueChanged;
-            _numGreen.Location = new Point(_numSaturation.Right + 30, _numRed.Bottom + 10);
+            _numGreen.Location = new Point(_numSaturation.Right + 3 * X, _numRed.Bottom + Y);
             _numGreen.ValueChanged += numRGB_ValueChanged;
-            _numBlue.Location = new Point(_numBrightness.Right + 30, _numGreen.Bottom + 10);
+            _numBlue.Location = new Point(_numBrightness.Right + 3 * X, _numGreen.Bottom + Y);
             _numBlue.ValueChanged += numRGB_ValueChanged;
-            _btnOK.Location = new Point(_numRed.Right + 10, Y + Diameter + 8);
+            _numAlpha.Location = new Point(_numBrightness.Right + 3 * X, _numBlue.Bottom + Y);
+            _numAlpha.ValueChanged += numRGB_ValueChanged;
+            _btnOK.Location = new Point(_numRed.Right + X, Y + AlphaYPos + Thickness);
             _btnOK.Text = "OK";
-            _btnOK.Width = ClientSize.Width - _numRed.Right - 10 - X;
+            _btnOK.Width = ClientSize.Width - _numRed.Right - X - X;
             _btnOK.Click += btnOK_Click;
+
+            _btnOld.Location = new Point(_numGreen.Right + X, _numGreen.Top);
+            _btnOld.Text = "Old";
+            _btnOld.Width = ClientSize.Width - _numRed.Right - X - X;
+            _btnOld.Click += (_, __) =>
+            {
+                SelectedColorAlpha = _oldColor;
+                TriggerColorChangedEvent();
+            };
+            _btnDefault.Location = new Point(_numBlue.Right + X, _numBlue.Top);
+            _btnDefault.Text = "Default";
+            _btnDefault.Width = ClientSize.Width - _numRed.Right - X - X;
+            _btnDefault.Click += (_, __) =>
+            {
+                SelectedColorAlpha = _defaultColor;
+                TriggerColorChangedEvent();
+            };
+            _btnOK.Height = _btnOld.Height = _btnDefault.Height = _numRed.Height;
 
             this.DoubleBuffered = true;
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -75,10 +120,18 @@ namespace CP
             this.Controls.Add(_numRed);
             this.Controls.Add(_numGreen);
             this.Controls.Add(_numBlue);
+            this.Controls.Add(_numAlpha);
+            
             this.Controls.Add(_btnOK);
+            this.Controls.Add(_btnOld);
+            this.Controls.Add(_btnDefault);
 
             SelectedColor = _oldColor = defaultColor;
             InitializeColorWheel();
+            InitializeAlphaPetternBrush();
+            InitializeAlphaBackground();
+
+            SelectedColorChanged += (_, __) => InitializeAlphaBackground();
         }
         public void InitializeColorWheel()
         {
@@ -99,11 +152,47 @@ namespace CP
             }
         }
 
+        private void InitializeAlphaPetternBrush()
+        {
+            var pattern = new Bitmap(2*X, 2*X);
+            using (var gp = Graphics.FromImage(pattern))
+            {
+                gp.FillRectangle(Brushes.White, new Rectangle(0, 0, X, X));
+                gp.FillRectangle(Brushes.LightGray, new Rectangle(X, 0, X, X));
+                gp.FillRectangle(Brushes.LightGray, new Rectangle(0, X, X, X));
+                gp.FillRectangle(Brushes.White, new Rectangle(X, X, X, X));
+            }
+            _alphaPatternBrush = new TextureBrush(pattern);
+        }
+
+        private void InitializeAlphaBackground()
+        {
+            if (_alphaBackground != null)
+                _alphaBackground.Dispose();
+            _alphaBackground = new Bitmap(AlphaWidth, AlphaHeight);
+
+            using (var gr = Graphics.FromImage(_alphaBackground))
+            using (LinearGradientBrush brush = new LinearGradientBrush(
+                                                                    new Point(0, 0),
+                                                                    new Point(AlphaWidth, AlphaHeight),
+                                                                    Color.FromArgb(0, SelectedColor),
+                                                                    Color.FromArgb(255, SelectedColor)))
+            {
+                gr.SmoothingMode = SmoothingMode.AntiAlias;
+                                
+                gr.FillRectangle(_alphaPatternBrush, 0, 0, Diameter, Thickness);
+                gr.FillRectangle(brush, 0, 0, AlphaWidth, AlphaHeight);
+            }
+        }
+
+
         //#==================================================================== FINALIZING
         protected override void Dispose(bool disposing)
         {
- 	         base.Dispose(disposing);
-             _colorWheel.Dispose();
+            base.Dispose(disposing);
+            _colorWheel.Dispose();
+            _alphaBackground.Dispose();
+            _alphaPatternBrush.Dispose();
         }
         //#==================================================================== FUNCTIONS
         private Point[] GetDonutPoints(int radius, Point center)
@@ -132,6 +221,12 @@ namespace CP
             float distance = (float)Math.Sqrt(Math.Pow(pt.Y - Center.Y, 2) + Math.Pow(pt.X - Center.X, 2));
             return (distance > InnerRadius && distance < Radius);
         }
+        
+        private bool IsInsideRect(Point loc, Rectangle rect)
+        {
+            return (rect.Top <= loc.Y && rect.Top + rect.Height >= loc.Y) &&
+                  (rect.Left <= loc.X && rect.Left + rect.Width >= loc.X);
+        }
 
         private bool IsInsideTriangle(Point pt)
         {
@@ -140,6 +235,12 @@ namespace CP
             float yPercent = (pt.Y - TriangleY) / (float)TriangleHeight;
             float length = TriangleWidth * yPercent;
             return (pt.X > Center.X - length / 2 && pt.X < Center.X + length / 2); // check horizontal point
+        }
+
+        private bool IsInsideAlpha(Point pt)
+        {
+            return (pt.X > X && pt.X < AlphaWidth) &&
+               (pt.Y > AlphaYPos && pt.Y < AlphaYPos + AlphaHeight);
         }
 
         private float GetHue(Point pt)
@@ -158,19 +259,36 @@ namespace CP
         {
             return (pt.Y - TriangleY) / (float)TriangleHeight * 100;
         }
+        private int GetAlpha(Point pt)
+        {
+            var alpha =  (pt.X - X) / (float)AlphaWidth * 255f;
+            return (int)alpha;
+        }
 
         //#==================================================================== PROPERTIES
         private int X
         {
-            get { return 10; }
+            get { return (int)_textSizePattern.Height; }
         }
         private int Y
         {
-            get { return 10; }
+            get { return (int)_textSizePattern.Height; }
+        }
+        private int AlphaWidth
+        { 
+            get { return Diameter; } 
+        }
+        private int AlphaHeight
+        {
+            get { return Thickness; }
+        }
+        private int AlphaYPos
+        {
+            get { return Y+Diameter+Y; }
         }
         private int Diameter
         {
-            get { return ClientSize.Width - X * 2; }
+            get { return ClientSize.Width-2*X; }
         }
         private int Radius
         {
@@ -206,7 +324,7 @@ namespace CP
         {
             get
             {
-                int radius = 5;
+                int radius = (int)(Y/2);
                 Point pt = GetPoint(InnerRadius + Thickness / 2, Center, (int)Hue);
                 return new Rectangle(pt.X - radius, pt.Y - radius, radius * 2, radius * 2);
             }
@@ -218,11 +336,21 @@ namespace CP
                 float xPercent = Saturation / 100;
                 float yPercent = Brightness / 100;
                 float length = TriangleWidth * yPercent;
-                int radius = 5;
+                int radius = (int)(Y / 2);
                 int x = (int)(Center.X - length / 2 + length * xPercent);
                 int y = TriangleY + (int)(yPercent * TriangleHeight);
                 Point pt = new Point(x, y);
                 return new Rectangle(pt.X - radius, pt.Y - radius, radius * 2, radius * 2);
+            }
+        }
+
+        private Rectangle AlphaPickerRect
+        {
+            get
+            {
+                int radius = (int)(Y / 2);
+                int width_pos = (int)(Alpha/255f*AlphaWidth);
+                return new Rectangle(X+width_pos-radius, AlphaYPos+ AlphaHeight/2-radius, radius*2, radius*2);
             }
         }
 
@@ -234,22 +362,61 @@ namespace CP
                 Red = value.R;
                 Green = value.G;
                 Blue = value.B;
+                Alpha = 255;
             }
+        }
+
+        public Color SelectedColorAlpha
+        {
+            get { return Color.FromArgb(Alpha, SelectedColor); }
+            set
+            {
+                Red = value.R;
+                Green = value.G;
+                Blue = value.B;
+                Alpha = value.A;
+            }
+        }
+
+        public Color OldColor
+        {
+            get { return this._oldColor; }
+            set { this._oldColor = value; }
+        }
+        public Color DefaultColor
+        {
+            get { return this._defaultColor; }
+            set { this._defaultColor = value; }
         }
         private float Hue
         {
             get { return (float)_numHue.Value; }
-            set { _numHue.Value = (decimal)value; }
+            set
+            {
+                if (float.IsNaN(value))
+                    return;
+                _numHue.Value = (decimal)Math.Round(value, 2);
+            }
         }
         private float Saturation
         {
             get { return (float)_numSaturation.Value; }
-            set { _numSaturation.Value = (decimal)Math.Min(Math.Max(value, 0), 100); }
+            set
+            {
+                if (float.IsNaN(value))
+                    return;
+                _numSaturation.Value = (decimal)(Math.Min(Math.Max(value, 0), 100));
+            }
         }
         private float Brightness
         {
             get { return (float)_numBrightness.Value; }
-            set { _numBrightness.Value = (decimal)Math.Min(Math.Max(value, 0), 100); }
+            set
+            {
+                if (float.IsNaN(value))
+                    return;
+                _numBrightness.Value = (decimal)Math.Min(Math.Max(value, 0), 100);
+            }
         }
         private int Red
         {
@@ -266,18 +433,29 @@ namespace CP
             get { return (int)_numBlue.Value; }
             set { _numBlue.Value = (decimal)value; }
         }
+        private int Alpha
+        {
+            get { return (int)_numAlpha.Value; }
+            set { _numAlpha.Value = (decimal)Math.Min(Math.Max(value,0), 255) ; }
+        }
 
         //#==================================================================== EVENTS
         protected override void OnPaint(PaintEventArgs e)
         {
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            DrawAlphaDonut(e.Graphics);
             DrawDonut(e.Graphics);
             DrawTriangle(e.Graphics);
-            DrawColorSquare(e.Graphics);
+            //DrawColorSquare(e.Graphics);
             DrawHuePicker(e.Graphics);
             DrawSBPicker(e.Graphics);
+            DrawAlphaPicker(e.Graphics);
             DrawLabels(e.Graphics);
             base.OnPaint(e);
+        }
+        private void DrawAlphaDonut(Graphics g)
+        {
+            g.DrawImage(_alphaBackground, X, AlphaYPos);
         }
         private void DrawDonut(Graphics g)
         {
@@ -302,10 +480,31 @@ namespace CP
         private void DrawColorSquare(Graphics g)
         {
             int height = (_numBlue.Bottom - _numGreen.Top) / 2;
-            using (SolidBrush brush = new SolidBrush(SelectedColor))
-                g.FillRectangle(brush, _btnOK.Left, _numGreen.Top, _btnOK.Width, height);
-            using (SolidBrush brush = new SolidBrush(_oldColor))
-                g.FillRectangle(brush, _btnOK.Left, _numGreen.Top + height, _btnOK.Width, height);
+            using (SolidBrush brush = new SolidBrush(SelectedColorAlpha))
+            {
+                var rect = new Rectangle(_btnOK.Left, _numGreen.Top, _btnOK.Width, height);
+                g.FillRectangle(_alphaPatternBrush, rect);
+                g.FillRectangle(brush, rect);
+            }
+
+            using (SolidBrush brush = new SolidBrush(OldColor))
+            {
+                _oldColorRect = new Rectangle(_btnOK.Left, _numBlue.Top, _btnOK.Width, height);
+                g.FillRectangle(_alphaPatternBrush, _oldColorRect);
+                g.FillRectangle(brush, _oldColorRect);
+
+                TextRenderer.DrawText(g, "Old", this.Font, _oldColorRect, SystemColors.WindowText, TextFormatFlags.VerticalCenter | TextFormatFlags.NoClipping);
+            }
+
+            using (SolidBrush brush = new SolidBrush(DefaultColor))
+            {
+                _defaultColorRect = new Rectangle(_btnOK.Left, _numBlue.Top + height, _btnOK.Width, height);
+                g.FillRectangle(_alphaPatternBrush, _defaultColorRect);
+                g.FillRectangle(brush, _defaultColorRect);
+
+                TextRenderer.DrawText(g, "Default", this.Font, _defaultColorRect, SystemColors.WindowText, TextFormatFlags.VerticalCenter | TextFormatFlags.NoClipping);
+            }
+
         }
         private void DrawHuePicker(Graphics g)
         {
@@ -318,6 +517,12 @@ namespace CP
             using (Pen pen = new Pen(new ColorEx.HSB(0, 0, brightness).ToColor(), 2))
                 g.DrawEllipse(pen, SBPickerRect);
         }
+        private void DrawAlphaPicker(Graphics g)
+        {
+            int brightness = (Brightness > 50 ? 0 : 100);
+            using (Pen pen = new Pen(new ColorEx.HSB(0, 0, brightness).ToColor(), 2))
+                g.DrawEllipse(pen, AlphaPickerRect);
+        }
         private void DrawLabels(Graphics g)
         {
             string[] labels = new string[] { "H", "S", "B", "R", "G", "B" };
@@ -328,33 +533,64 @@ namespace CP
                 rect.X = _numHue.Right + X;
                 TextRenderer.DrawText(g, labels[i + 3], this.Font, rect, SystemColors.WindowText, TextFormatFlags.VerticalCenter | TextFormatFlags.NoClipping);
                 rect.X = X;
-                rect.Y += _numHue.Height + 10;
+                rect.Y += _numHue.Height + Y;
             }
+            rect.X = _numHue.Right + X;
+            TextRenderer.DrawText(g, "A", this.Font, rect, SystemColors.WindowText, TextFormatFlags.VerticalCenter | TextFormatFlags.NoClipping);
         }
 
         protected override void OnMouseDown(MouseEventArgs e)
         {
+
             if (IsInsideDonut(e.Location))
             {
                 _controlState = ControlState.Donut;
                 Hue = GetHue(e.Location);
+                TriggerColorChangedEvent();
             }
             else if (IsInsideTriangle(e.Location))
             {
                 _controlState = ControlState.Triangle;
                 Saturation = GetSaturation(e.Location);
                 Brightness = GetBrightness(e.Location);
+                TriggerColorChangedEvent();
             }
+            else if (IsInsideAlpha(e.Location))
+            {
+                _controlState = ControlState.AlphaRect;
+                Alpha = GetAlpha(e.Location);
+                TriggerColorChangedEvent();
+            }
+            //else if (IsInsideRect(e.Location, _oldColorRect))
+            //{
+            //    SelectedColorAlpha = _oldColor;
+            //    TriggerColorChangedEvent();
+            //}
+            //else if (IsInsideRect(e.Location, _defaultColorRect))
+            //{
+            //    SelectedColorAlpha = _defaultColor;
+            //    TriggerColorChangedEvent();
+            //}
             base.OnMouseDown(e);
         }
+
         protected override void OnMouseMove(MouseEventArgs e)
         {
             if (_controlState == ControlState.Donut)
+            {
                 Hue = GetHue(e.Location);
+                TriggerColorChangedEvent();
+            }
             else if (_controlState == ControlState.Triangle)
             {
                 Saturation = GetSaturation(e.Location);
                 Brightness = GetBrightness(e.Location);
+                TriggerColorChangedEvent();
+            }
+            else if (_controlState == ControlState.AlphaRect)
+            {
+                Alpha = GetAlpha(e.Location);
+                TriggerColorChangedEvent();
             }
             base.OnMouseMove(e);
         }
@@ -388,6 +624,10 @@ namespace CP
                 this.Invalidate(false);
                 _isManualChange = false;
             }
+            else
+            {
+                TriggerColorChangedEvent();
+            }
         }
         private void numRGB_ValueChanged(object sender, EventArgs e)
         {
@@ -401,6 +641,16 @@ namespace CP
                 this.Invalidate(false);
                 _isManualChange = false;
             }
+            else
+            {
+                TriggerColorChangedEvent();
+            }
+        }
+
+        private void TriggerColorChangedEvent()
+        {
+            if (SelectedColorChanged != null)
+                SelectedColorChanged(this, EventArgs.Empty);
         }
     }
 }
